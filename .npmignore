@@ -1,10 +1,4 @@
-.*ignore
-__tests__/**
-.eslintrc.json
-Dockerfile
-run.sh
-.github/**
+.*
 .env*
 archive/**
-jest.config.js
-.vscode/**
+.github/**

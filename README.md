@@ -1,83 +1,59 @@
 # f1tv-dl
 
-Watch videos locally from f1tv website
+A command-line utility to get video or audio from f1tv.
 
-Note: a valid username/password is required. The app will save your session so the they will only be required again when your session has expried.
+Note: a valid authentication token is required. This utility is not affiliated in any way with Formula 1 or any of its subsidiaries and should only be used for personal/educational purposes. I haven't done any extensive testing, so apologies if some things are broken.
 
-```
-f1tv-dl <url>
+## Requirements
+* Node.js
+* npm
 
-Positionals:
-  url  The f1tv url for the video                                       [string]
+## Installation
+1.  Clone the repository.
+2.  Install the dependencies:
+    ```bash
+    npm install
+    ```
 
-Options:
-      --help                 Show help                                 [boolean]
-      --version              Show version number                       [boolean]
-  -c, --channel              Choose an alternate channel for a content with
-                             multiple video feeds. Use the channel-list option
-                             to see a list of channels and specify
-                             name/number/tla to select alternate channel.
-                                                        [string] [default: null]
-  -i, --international-audio  Select a language to include from the INTERNATIONAL
-                             feed. This audio will be included in the file as a
-                             secondary audio track.
-              [string] [choices: "eng", "nld", "deu", "fra", "por", "spa", "fx"]
-  -t, --itsoffset            Used to sync secondary audio. Specify the time
-                             offset as '(-)hh:mm:ss.SSS'
-                                              [string] [default: "00:00:00.000"]
-  -a, --audio-stream         Specify audio stream language to download
-                                                       [string] [default: "eng"]
-  -s, --video-size           Specify video size to download as WxH or 'best' to
-                             select the highest resolution. (e.g. 640x360,
-                             1920x1080, best)         [string] [default: "best"]
-  -f, --format               Specify mp4 or TS output (default mp4)
-                                [string] [choices: "mp4", "ts"] [default: "mp4"]
-  -o, --output-directory     Specify a directory for the downloaded file
-                                                        [string] [default: null]
-  -U, --username             F1TV User name             [string] [default: null]
-  -P, --password             F1TV password              [string] [default: null]
-      --channel-list         Provides a list of channels available from url (for
-                             videos with multiple cameras)
-                                                      [boolean] [default: false]
-      --stream-url           Return the tokenized URL for use in another
-                             application and do not download the video
-                                                      [boolean] [default: false]
-  -l, --log-level            Set the log level
-          [choices: "trace", "debug", "info", "warn", "error"] [default: "info"]
-```
-## Use
+## Usage
 
-Use npm to install.
+### 1. Get your authentication token
 
-([ffmpeg and ffprobe](https://www.ffmpeg.org/) are required and need to be present in the path)
+1.  Open a browser (e.g., Chrome).
+2.  Open **Developer Tools** (Right-click -> Inspect).
+3.  Go to the **Network** tab.
+4.  Log in to `https://f1tv.formula1.com/` as usual.
+5.  In the list of network requests, find one named `by-password`.
+6.  Click on it, and in the **Response** tab, find and copy the long string value for `subscriptionToken`.
 
-```
-npm i -g @thedave42/f1tv-dl
+### 2. Run the downloader
+Use the `f1tv-dl` command with the URL of the video you want to download and your copied token.
+
+**Basic download:**
+```bash
+f1tv-dl "[https://f1tv.formula1.com/detail/](https://f1tv.formula1.com/detail/)..." --token "YOUR_TOKEN_HERE"
 ```
 
-or use Docker (no need to install ffmpeg)
-
+**Audio-only download:**
+```bash
+f1tv-dl "[https://f1tv.formula1.com/detail/](https://f1tv.formula1.com/detail/)..." --token "YOUR_TOKEN_HERE" --audio-only
 ```
-docker run -v <your local directory>:/download ghcr.io/thedave42/f1tv-dl-docker:latest -o /download <url> [options]
-```
 
-Username and password can also be read from the environment variables `F1TV_USER` and `F1TV_PASS`.
+### Options
+* `<url>`: The F1TV URL for the video (Required).
+* `-T, --token`: Your manual entitlement token (Required).
+* `--audio-only`: Download only the audio stream (saved as `.m4a`).
+* `-c, --channel`: Select an alternate video channel (e.g., an onboard camera).
+* `-a, --audio-stream`: Specify the primary audio language (e.g., `eng`, `spa`).
+* `-i, --international-audio`: Add a secondary audio track from the international feed.
+* `-s, --video-size`: Choose video resolution (e.g., `1920x1080`, `best`).
+* `-o, --output-directory`: Specify a directory to save the file.
+* `--channel-list`: List all available video/audio channels for the URL and exit.
+* `--stream-url`: Print the final stream URL and exit without downloading.
+* `-l, --log-level`: Set the verbosity of the log output.
 
-## Download a video
+## Credits
 
-Log in to your f1tv account, navigate to the video you want to watch, and copy the url from your browser.
+This project is a fork of the original [f1tv-dl by thedave42](https://github.com/thedave42/f1tv-dl).
 
-`f1tv-dl <url>`
-
-## See a list of different video feeds from a race with multiple feeds
-
-`f1tv-dl <url> --channel-list`
-
-## Download the data channel stream from a race
-
-`f1tv-dl <url> -c data`
-
-## Add Dutch audio from the international broadcast feed 
-
-`f1tv-dl <url> -i nld`
-
+This fork removes the automatic login process and replaces it with a manual token, and also allows audio-only downloads. All credit goes to the original author for the majority of the work.

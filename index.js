@@ -1,17 +1,32 @@
 #!/usr/bin/env node
+
 const config = require('./lib/config');
 const yargs = require('yargs');
 const log = require('loglevel');
 const util = require('util');
+const path = require('path');
 const { spawn } = require('child_process');
 const ffmpegInstaller = require('@ffmpeg-installer/ffmpeg');
+
+let keytar;
+try {
+    keytar = require('keytar');
+    log.debug('keytar module loaded successfully.');
+} catch (e) {
+    keytar = null;
+    log.debug('keytar module not found. Token storage will not be used.');
+}
 
 const { isF1tvUrl, isRace } = require('./lib/f1tv-validator');
 const { getContentInfo, getContentStreamUrl, getAdditionalStreamsInfo, getContentParams, getProgramStreamId } = require('./lib/f1tv-api');
 
+const SERVICE_NAME = 'f1tv-dl';
+const ACCOUNT_NAME = 'f1tv-token';
+
 const getTokenizedUrl = async (url, content, channel) => {
     let f1tvUrl;
     log.debug(JSON.stringify(content.metadata, 2, 4));
+
     if (content.metadata.additionalStreams == null) {
         f1tvUrl = await getContentStreamUrl(content.id);
     } else {
@@ -26,40 +41,31 @@ const getTokenizedUrl = async (url, content, channel) => {
 
 (async () => {
     try {
-        const {
-            url,
-            token,
-            channel,
-            channelList,
-            audioOnly,
-            internationalAudio,
-            itsoffset,
-            audioStream,
-            videoSize,
-            format,
-            outputDirectory: outputDir,
-            streamUrl,
-            logLevel
-        } = yargs
-            .command('$0 <url>', 'Download a video from F1TV using a manual token.', (yarg) => {
+        const argv = yargs
+            .command('$0 [url]', 'Download a video from F1TV. If only an auth token is provided, it will be saved securely for future use.', (yarg) => {
                 yarg
                     .positional('url', {
                         type: 'string',
-                        desc: 'The F1TV URL for the video',
+                        desc: 'The F1TV URL for the video. Not required if only saving an auth token.',
                         coerce: (urlStr) => {
-                            if (isF1tvUrl(urlStr)) return urlStr;
-                            throw new Error('Not a valid F1TV video page URL.');
+                            if (urlStr && isF1tvUrl(urlStr)) return urlStr;
+                            if (urlStr) throw new Error('Not a valid F1TV video page URL.');
+                            return urlStr;
                         }
                     })
                     .option('token', {
                         type: 'string',
-                        desc: 'Manually provide the auth token.',
-                        alias: 'T',
-                        demandOption: true
+                        desc: 'Provide the auth token. If passed without a URL, it will be saved.',
+                        alias: 'T'
                     })
                     .option('audio-only', {
                         type: 'boolean',
                         desc: 'Download only the audio stream.',
+                        default: false
+                    })
+                    .option('remove-vocals', {
+                        type: 'boolean',
+                        desc: 'After downloading, create a second audio file with vocals removed.',
                         default: false
                     })
                     .option('channel', {
@@ -128,14 +134,70 @@ const getTokenizedUrl = async (url, content, channel) => {
                         default: 'info'
                     });
             })
-            .demandCommand()
             .help()
             .parse();
 
+        const {
+            url,
+            token,
+            logLevel,
+            channelList,
+            streamUrl,
+            audioOnly,
+            format,
+            channel,
+            outputDirectory: outputDir,
+            audioStream,
+            videoSize,
+            internationalAudio,
+            itsoffset,
+            removeVocals
+        } = argv;
+
         log.setLevel(logLevel);
 
-        config.setToken(token);
-        log.info('Using manually provided authentication token.');
+        if (removeVocals && !audioOnly) {
+            throw new Error('--remove-vocals can only be used with --audio-only downloads.');
+        }
+
+        if (token && !url) {
+            if (keytar) {
+                await keytar.setPassword(SERVICE_NAME, ACCOUNT_NAME, token);
+                log.info('Token saved securely. You can now run downloads without the --token or -T flag.');
+                return;
+            } else {
+                log.error('Could not save token: keytar module is not installed.');
+                log.info("To enable secure token storage, please run: npm install keytar");
+                log.info("Alternatively, provide the token for each download with the --token or -T flag, like so:");
+                log.info(`f1tv-dl <url> -T "${token}"`);
+                return;
+            }
+        }
+
+        if (!url) {
+            log.error('A F1TV URL is required to start a download.');
+            yargs.showHelp();
+            return;
+        }
+
+        let finalToken = token;
+
+        if (!finalToken) {
+            if (keytar) {
+                finalToken = await keytar.getPassword(SERVICE_NAME, ACCOUNT_NAME);
+                if (finalToken) {
+                    log.info('Using saved authentication token.');
+                } else {
+                    throw new Error('No saved token found. Please save a token first by running:\nf1tv-dl -T <your-token>');
+                }
+            } else {
+                throw new Error('A token is required. You must provide a token using the -T flag.');
+            }
+        } else {
+            log.info('Using manually provided authentication token.');
+        }
+
+        config.setToken(finalToken);
 
         const content = await getContentInfo(url);
 
@@ -228,13 +290,60 @@ const getTokenizedUrl = async (url, content, channel) => {
         });
 
         ffmpegProcess.on('close', (code) => {
-            log.info(code === 0 ? '\nDownload complete.' : `\nffmpeg process exited with code ${code}.`);
+            if (code !== 0) {
+                log.info(`\nDownload failed. ffmpeg process exited with code ${code}.`);
+                return;
+            }
+
+            log.info('\nDownload complete.');
+
+            if (removeVocals) {
+                log.info('Starting vocal removal process...');
+
+                const { dir, name, ext } = path.parse(outFileSpec);
+                const noVocalsFile = path.join(dir, `${name}-no-vocals${ext}`);
+
+                const processingArgs = [
+                    '-i', outFileSpec,
+                    '-af', 'pan=stereo|c0=c0|c1=-1*c1,aformat=channel_layouts=mono',
+                    '-c:a', 'aac',
+                    '-b:a', '256k',
+                    '-y', noVocalsFile
+                ];
+                
+                log.info('Output file:', config.makeItGreen(noVocalsFile));
+                log.debug('Executing command:', ffmpegPath, processingArgs.join(' '));
+
+                const processingProcess = spawn(ffmpegPath, processingArgs);
+
+                processingProcess.stderr.on('data', (data) => {
+                    const progress = data.toString().trim().split('\n').pop();
+                    process.stdout.write('\r' + progress);
+                });
+
+                processingProcess.on('close', (processCode) => {
+                    if (processCode === 0) {
+                        log.info('\nVocal removal complete.');
+                    } else {
+                        log.error(`\nVocal removal failed. ffmpeg process exited with code ${processCode}.`);
+                    }
+                });
+
+                processingProcess.on('error', (err) => {
+                    log.error('Failed to start vocal removal process.', err);
+                });
+            }
         });
 
         ffmpegProcess.on('error', (err) => log.error('Failed to start ffmpeg process.', err));
 
     } catch (e) {
         log.error('Error:', e.message);
+
+        if (e.message && (e.message.includes('401') || e.message.toLowerCase().includes('unauthorized'))) {
+            log.warn('The token may be invalid or expired. Save a new one by running:\nf1tv-dl -T <your-new-token>');
+        }
+
         log.debug(e);
     }
 })();
